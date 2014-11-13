@@ -12,7 +12,7 @@
 
 / {
 	model = "Atmel AT91SAM9M10G45-EK";
-	compatible = "atmel,at91sam9m10g45ek", "atmel,at91sam9g45", "atmel,at91sam9";
+	compatible = "atmel,at91sam9m10g45ek", "atmel,at91sam9g45", "atmel,at91sam9" ;
 
 	chosen {
 		bootargs = "mem=64M console=ttyS0,115200 root=/dev/mtdblock1 rw rootfstype=jffs2";
@@ -44,31 +44,41 @@
 					<&pinctrl_usart1
 					 &pinctrl_usart1_rts
 					 &pinctrl_usart1_cts>;
-				status = "okay";
+				status = "disabled";
 			};
 
 			macb0: ethernet@fffbc000 {
-				phy-mode = "rmii";
+				phy-mode = "mii";
 				status = "okay";
 			};
 
 			i2c0: i2c@fff84000 {
-				status = "okay";
+				status = "disabled";
 			};
 
 			i2c1: i2c@fff88000 {
-				status = "okay";
+				status = "disabled";
 			};
 
 			watchdog@fffffd40 {
+				status = "disabled";
+			};
+
+			fpga0: fpga@1000000 {
+				compatible = "sk,at91-xc6slx";
+				pinctrl-0 = <&pinctrl_clk_fpga0>;
+				reg = <0x10000000 0x20000000>;
+				reg-names = "fpga_mem";
+				clock_divider = <0>;
 				status = "okay";
 			};
 
+			/*X21*/
 			mmc0: mmc@fff80000 {
 				pinctrl-0 = <
 					&pinctrl_board_mmc0
-					&pinctrl_mmc0_slot0_clk_cmd_dat0
-					&pinctrl_mmc0_slot0_dat1_3>;
+					&pinctrl_mmc0_clk_cmd_dat0
+					&pinctrl_mmc0_dat1_dat3>;
 				status = "okay";
 				slot@0 {
 					reg = <0>;
@@ -77,33 +87,59 @@
 				};
 			};
 
+			/*X9*/
 			mmc1: mmc@fffd0000 {
 				pinctrl-0 = <
 					&pinctrl_board_mmc1
-					&pinctrl_mmc1_slot0_clk_cmd_dat0
-					&pinctrl_mmc1_slot0_dat1_3>;
+					&pinctrl_mmc1_clk_cmd_dat0
+					&pinctrl_mmc1_dat1_dat3>;
 				status = "okay";
 				slot@0 {
 					reg = <0>;
 					bus-width = <4>;
-					cd-gpios = <&pioD 11 GPIO_ACTIVE_HIGH>;
-					wp-gpios = <&pioD 29 GPIO_ACTIVE_HIGH>;
+					cd-gpios = <&pioD 5 GPIO_ACTIVE_HIGH>;
 				};
 			};
 
 			pinctrl@fffff200 {
-				mmc0 {
-					pinctrl_board_mmc0: mmc0-board {
-						atmel,pins =
-							<AT91_PIOD 10 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH>;	/* PD10 gpio CD pin pull up and deglitch */
-					};
-				};
-
 				mmc1 {
 					pinctrl_board_mmc1: mmc1-board {
 						atmel,pins =
-							<AT91_PIOD 11 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH	/* PD11 gpio CD pin pull up and deglitch */
-							 AT91_PIOD 29 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP>;	/* PD29 gpio WP pin pull up */
+							<AT91_PIOD 5 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH>;	/* PD10 gpio CD pin pull up and deglitch */
+					};
+
+					pinctrl_mmc1_clk_cmd_dat0: mmc1_clk_cmd_dat0-0 {
+						atmel,pins =
+							<AT91_PIOA 31 AT91_PERIPH_A AT91_PINCTRL_NONE /*clk pin*/
+							AT91_PIOA 22 AT91_PERIPH_A AT91_PINCTRL_PULL_UP /*cmd pin*/
+							AT91_PIOA 23 AT91_PERIPH_A AT91_PINCTRL_PULL_UP>; /*Dat 0 pin*/
+					};
+					pinctrl_mmc1_dat1_dat3: mmc1_dat1_dat3-0 {
+						atmel,pins =
+							<AT91_PIOA 24 AT91_PERIPH_A AT91_PINCTRL_PULL_UP	/*Dat 1 pin*/
+							AT91_PIOA 25 AT91_PERIPH_A AT91_PINCTRL_PULL_UP	/*Dat 2 pin*/
+							AT91_PIOA 26 AT91_PERIPH_A AT91_PINCTRL_PULL_UP>;	/*Dat 3 pin*/
+					};
+				};
+
+				mmc0 {
+					pinctrl_board_mmc0: mmc0-board {
+						atmel,pins =
+							<AT91_PIOD 10 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH>;	/* PD11 gpio CD pin pull up and deglitch */
+					};
+
+					pinctrl_mmc0_clk_cmd_dat0: mmc0_clk_cmd_dat1-0 {
+						atmel,pins =
+							<AT91_PIOA 0 AT91_PERIPH_A AT91_PINCTRL_NONE
+							AT91_PIOA 1 AT91_PERIPH_A AT91_PINCTRL_PULL_UP
+							AT91_PIOA 2 AT91_PERIPH_A AT91_PINCTRL_PULL_UP>;
+					};
+
+					pinctrl_mmc0_dat1_dat3: mmc0_dat1_dat3-0 {
+						atmel,pins =
+							<AT91_PIOA 3 AT91_PERIPH_A AT91_PINCTRL_PULL_UP	/*Dat 1 pin*/
+							AT91_PIOA 4 AT91_PERIPH_A AT91_PINCTRL_PULL_UP	/*Dat 2 pin*/
+							AT91_PIOA 5 AT91_PERIPH_A AT91_PINCTRL_PULL_UP>;	/*Dat 3 pin*/
 					};
 				};
 
@@ -114,10 +150,24 @@
 							 AT91_PIOD 31 AT91_PERIPH_B AT91_PINCTRL_PULL_UP>;	/* PD31 periph B */
 					};
 				};
-			};
+
+				fpga0 {
+					pinctrl_clk_fpga0: clk_fpga0 {
+						atmel,pins =
+							<AT91_PIOE 0  AT91_PERIPH_B AT91_PINCTRL_NONE>;	
+					};
+				};
+
+/*				fpga0 {
+					pinctl_clk_fpga0: clk_fpga0 {
+						atmel,pins =
+							<AT91_PIOE 0  AT91_PERIPH_B AT91_PINCTL_NONE>;
+					};
+				};
+*/			};
 
 			spi0: spi@fffa4000{
-				status = "okay";
+				status = "disabled";
 				cs-gpios = <&pioB 3 0>, <0>, <0>, <0>;
 				mtd_dataflash@0 {
 					compatible = "atmel,at45", "atmel,dataflash";
@@ -128,7 +178,7 @@
 
 			usb2: gadget@fff78000 {
 				atmel,vbus-gpio = <&pioB 19 GPIO_ACTIVE_HIGH>;
-				status = "okay";
+				status = "disabled";
 			};
 
 			adc0: adc@fffb0000 {
@@ -143,11 +193,11 @@
 					&pinctrl_adc0_ad6
 					&pinctrl_adc0_ad7>;
 				atmel,adc-ts-wires = <4>;
-				status = "okay";
+				status = "disabled";
 			};
 
 			pwm0: pwm@fffb8000 {
-				status = "okay";
+				status = "disabled";
 
 				pinctrl-names = "default";
 				pinctrl-0 = <&pinctrl_pwm_leds>;
@@ -156,7 +206,7 @@
 
 		fb0: fb@0x00500000 {
 			display = <&display0>;
-			status = "okay";
+			status = "disabled";
 
 			display0: display {
 				bits-per-pixel = <32>;
@@ -187,7 +237,7 @@
 			nand-bus-width = <8>;
 			nand-ecc-mode = "soft";
 			nand-on-flash-bbt;
-			status = "okay";
+			status = "disabled";
 
 			boot@0 {
 				label = "bootstrap/uboot/kernel";
@@ -206,14 +256,14 @@
 		};
 
 		usb0: ohci@00700000 {
-			status = "okay";
+			status = "disabled";
 			num-ports = <2>;
 			atmel,vbus-gpio = <&pioD 1 GPIO_ACTIVE_LOW
 					   &pioD 3 GPIO_ACTIVE_LOW>;
 		};
 
 		usb1: ehci@00800000 {
-			status = "okay";
+			status = "disabled";
 		};
 	};
 
