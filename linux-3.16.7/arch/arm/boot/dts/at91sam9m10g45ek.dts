@@ -69,8 +69,13 @@
 				pinctrl-0 = <&pinctrl_clk_fpga0>;
 				reg = <0x10000000 0x20000000>;
 				reg-names = "fpga_mem";
-				clock_divider = <0>;
+				fpga_clock_divider = <0>;
+				fpga_css = <0>;
+				fpga_slckmsck = <0>;
+				device_name = "fpga0";
 				status = "okay";
+				fpga_clock_pin = <0>;
+				fpga_clock_pin_group = <AT91_PIOE>;
 			};
 
 			/*X21*/
