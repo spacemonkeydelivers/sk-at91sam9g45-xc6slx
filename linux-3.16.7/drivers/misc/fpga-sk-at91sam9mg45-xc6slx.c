@@ -74,11 +74,58 @@
 #define PIO_WPMR 0x00E4
 #define PIO_WPSR 0x00E8
 
+#define SMC 0xFFFFE800
+#define SMC_SETUP(num) (0x10 * num + 0x00)
+#define SMC_PULSE(num) (0x10 * num + 0x04)
+#define SMC_CYCLE(num) (0x10 * num + 0x08)
+#define SMC_MODE(num) (0x10 * num + 0x0C)
+#define SMC_DELAY1 0xC0
+#define SMC_DELAY2 0xC4
+#define SMC_DELAY3 0xC8
+#define SMC_DELAY4 0xCC
+#define SMC_DELAY5 0xD0
+#define SMC_DELAY6 0xD4
+#define SMC_DELAY7 0xD8
+#define SMC_DELAY8 0xDC
+
 
 #define SET_BIT(var, pos) (var |= 1 << pos;)
 #define CLEAR_BIT(var, pos) (var &= ~(1 << pos);)
 #define TOGGLE_BIT(var, pos) (var ^= 1 << pos;)
 #define CHECK_BIT(var, pos) (var & (1 << pos);)
+
+
+/*
+
+#setup
+NCS_RD_SETUP
+NRD_SETUP
+NCS_WR_SETUP
+NWE_SETUP
+
+#pulse
+NCS_RD_PULSE
+NRD_PULSE
+NCS_WR_PULSE
+NWE_PULSE
+
+#cycle
+NRD_CYCLE
+NWE_CYCLE
+
+#mode
+PS
+PMEN
+TDF_MODE
+TDF_CYCLES
+DBW
+BAT
+EXNW_MODE
+WRITE_MODE
+READ_MODE
+
+*/
+
 
 bool set_ebicsa(void)
 {
@@ -153,6 +200,7 @@ struct fpga
 	struct platform_device* pdev;
 	unsigned int fpga_clock_pin;
 	unsigned int fpga_clock_pin_group;
+	unsigned int fpga_cs_index[2];
 };
 
 struct fpga my_fpga;
@@ -200,18 +248,24 @@ static int sk_fpga_probe (struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	ret =  of_property_read_string(pdev->dev.of_node, "device_name", my_fpga.device_name);
+	ret = of_property_read_string(pdev->dev.of_node, "device_name", my_fpga.device_name);
 	if (ret!=0)
 	{
 		printk("Failed to obtain clock divider for fpga\n");
 		return -ENOMEM;
 	}
 
+	res = of_property_read_u32_array(pdev->dev.of_node, "fpga_cs_index", &my_fpga.fpga_cs_index, 2);
+	if (!res)
+	{
+		printk(KERN_ALERT"Failed to get fpga cs indexex\n")
+		return -ENOMEM;
+	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "fpga_mem");
 	if (!res)
 	{
-		printk(KERN_ALERT"Failed to get regs\n");
+		printk(KERN_ALERT"Failed to get fpga regs\n");
 		return -ENOMEM;
 	}
 	my_fpga.mem_start = res->start;

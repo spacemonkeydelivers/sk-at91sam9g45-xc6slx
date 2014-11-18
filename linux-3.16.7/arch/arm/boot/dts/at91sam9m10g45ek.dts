@@ -76,6 +76,7 @@
 				status = "okay";
 				fpga_clock_pin = <0>;
 				fpga_clock_pin_group = <AT91_PIOE>;
+				fpga_cs_index = <0>, <1>;
 			};
 
 			/*X21*/
