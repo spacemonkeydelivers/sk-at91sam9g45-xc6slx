@@ -125,7 +125,11 @@
                 fpga0 {
 					pinctrl_pck0_as_fpga_clock: fpga-clk {
 						atmel,pins =
-							<AT91_PIOE 0  AT91_PERIPH_B AT91_PINCTRL_NONE>;
+							<AT91_PIOE 0   AT91_PERIPH_B AT91_PINCTRL_NONE>;
+					};
+					pinctrl_piod18_as_fpga_irq: fpga-irq {
+						atmel,pins =
+							<AT91_PIOD 18  AT91_PERIPH_B AT91_PINCTRL_NONE>;
 					};
 				};
                 
@@ -249,10 +253,11 @@
 				status = "okay";
 				clocks = <&pck0>;
 				clock-names = "mclk";
-                pinctrl-0 = <&pinctrl_pck0_as_fpga_clock>;
+                pinctrl-0 = <&pinctrl_pck0_as_fpga_clock &pinctrl_piod18_as_fpga_irq>;
                 fpga-mem-size = <0x2000000>;
-                fpga-mem-phys-start = <0x10000000>;
-                fpga-irq-gpio = <&poiD 18>;
+                fpga-mem-phys-start-cs0 = <0x10000000>;
+                fpga-mem-phys-start-cs1 = <0x20000000>;
+                fpga-irq-gpio = <&pioD 18 GPIO_ACTIVE_LOW>;
         };
 
 	};
