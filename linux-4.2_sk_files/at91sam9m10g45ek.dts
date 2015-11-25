@@ -122,16 +122,24 @@
 					};
 				};
                 
-                fpga0 {
+		       fpga0 {
 					pinctrl_pck0_as_fpga_clock: fpga-clk {
 						atmel,pins =
 							<AT91_PIOE 0   AT91_PERIPH_B AT91_PINCTRL_NONE>;
 					};
-					pinctrl_piod18_as_fpga_irq: fpga-irq {
+					pinctrl_pc28_as_fpga_irq: fpga-irq {
 						atmel,pins =
-							<AT91_PIOD 18  AT91_PERIPH_B AT91_PINCTRL_PULL_DOWN_DEGLITCH>;
+							<AT91_PIOC 28   AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;
+					};
+					pinctrl_fpga_prog: fpga-prog {
+						atmel,pins =
+							<AT91_PIOC 10   AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOC 11   AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOC 29   AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOC 30   AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
 					};
 				};
+				
                 
 			};
 	
@@ -253,13 +261,16 @@
 				status = "okay";
 				clocks = <&pck0>;
 				clock-names = "mclk";
-                pinctrl-0 = <&pinctrl_pck0_as_fpga_clock &pinctrl_piod18_as_fpga_irq>;
-                interrupt-parent = <&aic>;
-                interrupts = <31 IRQ_TYPE_LEVEL_HIGH 1>;
+                pinctrl-0 = <&pinctrl_pck0_as_fpga_clock &pinctrl_pc28_as_fpga_irq &pinctrl_fpga_prog>;
                 fpga-mem-size = <0x2000000>;
                 fpga-mem-phys-start-cs0 = <0x10000000>;
                 fpga-mem-phys-start-cs1 = <0x20000000>;
-                //fpga-irq-gpio = <&pioD 18 GPIO_ACTIVE_LOW>;
+                pinctrl-names = "default";
+                fpga-irq-gpio = <&pioC 28 GPIO_ACTIVE_LOW>;
+                fpga-program-done = <&pioC 29 GPIO_ACTIVE_HIGH>;
+                fpga-program-cclk = <&pioC 10 GPIO_ACTIVE_HIGH>;
+                fpga-program-din = <&pioC 11 GPIO_ACTIVE_HIGH>;
+                fpga-program-prog = <&pioC 30 GPIO_ACTIVE_HIGH>;
         };
 
 	};
