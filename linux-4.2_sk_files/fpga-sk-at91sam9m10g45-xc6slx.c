@@ -34,19 +34,7 @@
 #define WRITE_REG(phys_reg, value) (iowrite32(value, (void*)phys_reg))
 #define READ_REG(phys_reg) (ioread32((void*)phys_reg))
 
-#define SMC 0xFFFFE800
-#define SMC_SETUP(num) (0x10 * num + 0x00)
-#define SMC_PULSE(num) (0x10 * num + 0x04)
-#define SMC_CYCLE(num) (0x10 * num + 0x08)
-#define SMC_MODE(num) (0x10 * num + 0x0C)
-#define SMC_DELAY1 0xC0
-#define SMC_DELAY2 0xC4
-#define SMC_DELAY3 0xC8
-#define SMC_DELAY4 0xCC
-#define SMC_DELAY5 0xD0
-#define SMC_DELAY6 0xD4
-#define SMC_DELAY7 0xD8
-#define SMC_DELAY8 0xDC
+
 
 
 #define SET_BIT(var, pos) (var |= 1 << pos)
@@ -57,27 +45,9 @@
 
 #define CALC_ADDR(addr) ((uint32_t*)(my_fpga.fpga_mem + addr))
 
-void prog_fpga(unsigned char* buff, unsigned int bufLen);
+
 
 struct clk* mclk;
-
-//struct fpga
-//{
-	//unsigned char* device_name;
-	//struct platform_device *pdev;
-	
-	//unsigned int fpga_mem_phys_start;
-	//unsigned char* fpga_mem;
-	//unsigned int fpga_mem_size;
-	
-	//unsigned char fpga_open;
-	//unsigned char fpga_irq_pin;
-	//unsigned char fpga_cclk;
-	//unsigned char fpga_din;
-	//unsigned char fpga_done;
-	//unsigned char fpga_prog;
-//};
-
 struct fpga my_fpga;
 
 void write_half(uint32_t addr, uint16_t data)
@@ -284,19 +254,24 @@ unsigned register_interrupt(unsigned pin)
 
 
 
-static int sk_fpga_probe (struct platform_device *pdev)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+int fill_fpga_structure()
 {
 	int ret = -EIO;
-	unsigned int mclk_rate;
-	my_fpga.pdev = pdev;
-
-	printk("Loading FPGA driver for SK-AT91SAM9M10G45EK-XC6SLX\n");
-
-	ret = misc_register(&fpga_dev);
-	if (ret)
-		printk(KERN_ERR"Unable to register \"fpga\" misc device\n");
-	
-
 	mclk = devm_clk_get(&pdev->dev, "mclk");
 	if (IS_ERR(mclk)) {
 		dev_err(&pdev->dev, "Failed to get MCLK\n");
@@ -331,6 +306,41 @@ static int sk_fpga_probe (struct platform_device *pdev)
 		printk("Failed to obtain start mem address from dtb\n");
 		return -ENOMEM;
 	}
+	
+	my_fpga.fpga_irq_pin = of_get_named_gpio(pdev->dev.of_node, "fpga-irq-gpio", 0);
+	my_fpga.fpga_done = of_get_named_gpio(pdev->dev.of_node, "fpga-program-done", 0);
+	my_fpga.fpga_cclk = of_get_named_gpio(pdev->dev.of_node, "fpga-program-cclk", 0);
+	my_fpga.fpga_din = of_get_named_gpio(pdev->dev.of_node, "fpga-program-din", 0);
+	my_fpga.fpga_prog = of_get_named_gpio(pdev->dev.of_node, "fpga-program-prog", 0);
+}
+
+void fpga_init()
+{
+
+	setup_smc0();
+	my_fpga.fpga_open = 0;
+	
+	ret = register_interrupt(my_fpga.fpga_irq_pin);
+
+	
+}
+
+
+static int sk_fpga_probe (struct platform_device *pdev)
+{
+	int ret = -EIO;
+	unsigned int mclk_rate;
+	my_fpga.pdev = pdev;
+	my_fpga.init = 0;
+
+	printk("Loading FPGA driver for SK-AT91SAM9M10G45EK-XC6SLX\n");
+
+	ret = misc_register(&fpga_dev);
+	if (ret)
+		printk(KERN_ERR"Unable to register \"fpga\" misc device\n");
+	
+
+	
 
 	request_mem_region(my_fpga.fpga_mem_phys_start, my_fpga.fpga_mem_size, "sk-fpga");
 	my_fpga.fpga_mem = ioremap(my_fpga.fpga_mem_phys_start, my_fpga.fpga_mem_size);
@@ -340,21 +350,7 @@ static int sk_fpga_probe (struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	setup_smc0();
-	my_fpga.fpga_open = 0;
-	
-	//fpga-irq-gpio = <&pioC 28 GPIO_ACTIVE_LOW>;
-	//fpga-program-done = <&pioC 29 GPIO_ACTIVE_LOW>;
-	//fpga-program-cclk = <&pioC 10 GPIO_ACTIVE_LOW>;
-	//fpga-program-din = <&pioC 11 GPIO_ACTIVE_LOW>;
-	//fpga-program-prog = <&pioC 30 GPIO_ACTIVE_LOW>;
-	my_fpga.fpga_irq_pin = of_get_named_gpio(pdev->dev.of_node, "fpga-irq-gpio", 0);
-	my_fpga.fpga_done = of_get_named_gpio(pdev->dev.of_node, "fpga-program-done", 0);
-	my_fpga.fpga_cclk = of_get_named_gpio(pdev->dev.of_node, "fpga-program-cclk", 0);
-	my_fpga.fpga_din = of_get_named_gpio(pdev->dev.of_node, "fpga-program-din", 0);
-	my_fpga.fpga_prog = of_get_named_gpio(pdev->dev.of_node, "fpga-program-prog", 0);
-	
-	ret = register_interrupt(my_fpga.fpga_irq_pin);
+	fill_fpga_structure();
 
 //	int val = gpio_get_value(AT91_PIN_PD19);
 //	printk("PD19: %x\n", val);
