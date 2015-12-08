@@ -1,53 +1,26 @@
 #include <misc/fpga-sk-at91sam9m10g45-xc6slx.h>
 
-typedef enum
-{
-	SK_FPGA_NO_STATUS = 0x0,
-	SK_FPGA_PROGRAMMED = 0x1,
-	SK_FPGA_SMC0_SET = 0x2,
-	SK_FPGA_CLOCK_RATE_SET = 0x4,
-	SK_FPGA_CLOCK_STARTED = 0x8,
-} sk_fpga_status;
-
-struct sk_fpga_action_set
-{
-	uint16_t action;
-	uint16_t mode;
-	uint16_t address_lo;
-	uint16_t address_hi;
-	uint16_t data_lo;
-	uint16_t data_hi;
-};
-
-struct sk_fpga_action_get
-{
-	uint16_t data_read_lo;
-	uint16_t data_read_hi;
-};
-
-struct sk_fpga
-{
-	struct platform_device *pdev;
-	unsigned int fpga_mem_phys_start_cs0; // phys mapped addr of fpga mem on cs0
-	unsigned int fpga_mem_phys_start_cs1; // phys mapped addr of fpga mem on cs1
-	unsigned char *fpga_mem_virt_start_cs0; // virt mapped addr of fpga mem on cs0
-	unsigned char *fpga_mem_virt_start_cs1; // virt mapped addr of fpga mem on cs0
-	unsigned int fpga_mem_size; // phys mem size on any cs pin
-	unsigned char fpga_open_counter; // number of fpga openings
-	unsigned char fpga_irq_pin; // ping to recieve irq from fpga on arm
-	unsigned char fpga_cclk; // pin to run cclk on fpga
-	unsigned char fpga_din; // pin to set data to fpga
-	unsigned char fpga_done; // pin to read status done from fpga
-	unsigned char fpga_prog; // pin to set mode to prog on fpga
-	unsigned int fpga_clk_rate; // clock rate for fpga in mhz
-	int fpga_irq_num;
-	sk_fpga_status fpga_status; // status of fpga
-	struct clk* fpga_clk; // clock for fpga
-};
 
 struct sk_fpga my_fpga;
-struct sk_fpga_action_set my_fpga_action_set;
-struct sk_fpga_action_get my_fpga_action_get;
+
+static const struct file_operations fpga_fops = {
+        .owner                = THIS_MODULE,
+        .read                 = sk_fpga_read,
+        .write                = sk_fpga_write,
+        .open                 = sk_fpga_open,
+        .release              = sk_fpga_release,
+		.unlocked_ioctl 	  = sk_fpga_ioctl,
+};
+
+static struct miscdevice sk_fpga_dev = {
+        MISC_DYNAMIC_MINOR,
+        "fpga",
+        &fpga_fops
+};
+
+
+sk_fpga_iface_write my_fpga_iface_write;
+sk_fpga_iface_read my_fpga_iface_read;
 
 
 irqreturn_t sk_fpga_interrupt_handler(int irq, void *dev_id)
@@ -56,10 +29,11 @@ irqreturn_t sk_fpga_interrupt_handler(int irq, void *dev_id)
     if (gpio_get_value(my_fpga.fpga_irq_pin) == 1)
     {
 		printk("IRQ HAPPENED\n");
-		status = *((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + STATUS));
+		status = READ_REG(FPGA_REG_STATUS);
 		// read status reg to clear the interrupt
 		// if act
-
+		my_fpga.fpga_data_ready = 1;
+		wake_up(&my_fpga.fpga_wait_queue);
 	}
     return IRQ_HANDLED;
 }
@@ -76,6 +50,7 @@ int sk_fpga_reg_interrupt(unsigned pin)
 		printk("Can't register IRQ %d\n", irq_num);
 		return -EIO;
 	}
+	my_fpga.fpga_status |= SK_FPGA_IRQ_REGISTERED;
 	my_fpga.fpga_irq_num = irq_num;
 	return 0;
 }
@@ -85,26 +60,7 @@ void sk_fpga_unreg_interrupt(void)
 	free_irq(my_fpga.fpga_irq_num, NULL);
 	gpio_free(my_fpga.fpga_irq_pin);
 	my_fpga.fpga_irq_num = -1;
-}
-
-void sk_fpga_read_command(void)
-{
-	if (my_fpga_action_set.action == 1)
-	{
-		my_fpga_action_get.data_read_lo = *((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + DATA_READ_LO));
-		my_fpga_action_get.data_read_hi = *((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + DATA_READ_HI));
-	}
-}
-
-void sk_fpga_write_command(void)
-{
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + MODE)) = my_fpga_action_set.mode;
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + DATA_LO)) = my_fpga_action_set.data_lo;
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + DATA_HI)) = my_fpga_action_set.data_hi;
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + ADDRESS_LO)) = my_fpga_action_set.address_lo;
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + ADDRESS_HI)) = my_fpga_action_set.address_hi;
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + ACTION)) = my_fpga_action_set.action;
-	*((uint16_t*)(my_fpga.fpga_mem_virt_start_cs0 + RUN)) = 1;
+	my_fpga.fpga_status &= ~SK_FPGA_IRQ_REGISTERED;
 }
 
 int sk_fpga_setup_smc0(void)
@@ -144,66 +100,75 @@ static int sk_fpga_open(struct inode *inode, struct file *file)
 		printk("Fpga is already opened: %d\n", my_fpga.fpga_open_counter);
 		return -EBUSY;
 	}
-	if (my_fpga.fpga_irq_num > 0)
+	if (my_fpga.fpga_status & SK_FPGA_PROGRAMMING)
 	{
-		printk("UNREGISTERING INTERRUPT\n");
-		sk_fpga_unreg_interrupt();
+		if (my_fpga.fpga_status & SK_FPGA_IRQ_REGISTERED)
+		{
+			printk("UNREGISTERING INTERRUPT\n");
+			sk_fpga_unreg_interrupt();
+		}
+
+		my_fpga.fpga_open_counter = 1;
+		err = gpio_request(my_fpga.fpga_prog, "fpga-prog-prog");
+		gpio_direction_output(my_fpga.fpga_prog, 1);
+		err = gpio_request(my_fpga.fpga_cclk, "fpga-prog-cclk");
+		gpio_direction_output(my_fpga.fpga_cclk, 1);
+		err = gpio_request(my_fpga.fpga_din, "fpga-prog-din");
+		gpio_direction_output(my_fpga.fpga_din, 1);
+		err = gpio_request(my_fpga.fpga_done, "fpga-prog-done");
+		gpio_direction_input(my_fpga.fpga_done);
+
+		gpio_set_value(my_fpga.fpga_prog, 0);
+	//	udelay(10);
+		gpio_set_value(my_fpga.fpga_prog, 1);
+		//udelay(1000);
+		return err;
 	}
-
-	my_fpga.fpga_open_counter = 1;
-	my_fpga.fpga_status &= ~(1 << SK_FPGA_PROGRAMMED);
-	err = gpio_request(my_fpga.fpga_prog, "fpga-prog-prog");
-	gpio_direction_output(my_fpga.fpga_prog, 1);
-	err = gpio_request(my_fpga.fpga_cclk, "fpga-prog-cclk");
-	gpio_direction_output(my_fpga.fpga_cclk, 1);
-	err = gpio_request(my_fpga.fpga_din, "fpga-prog-din");
-	gpio_direction_output(my_fpga.fpga_din, 1);
-	err = gpio_request(my_fpga.fpga_done, "fpga-prog-done");
-	gpio_direction_input(my_fpga.fpga_done);
-
-	gpio_set_value(my_fpga.fpga_prog, 0);
-//	udelay(10);
-	gpio_set_value(my_fpga.fpga_prog, 1);
-	//udelay(1000);
-	return err;
+	return 0;
 }
 
 static int sk_fpga_release(struct inode *inode, struct file *file)
 {
 	int counter, i, done = 0;
     my_fpga.fpga_open_counter = 0;
-    gpio_set_value(my_fpga.fpga_din, 1);
-	done = gpio_get_value(my_fpga.fpga_done);
-	counter = 0;
-	while ( !done )
+    if (my_fpga.fpga_status & SK_FPGA_PROGRAMMING)
 	{
-		gpio_set_value(my_fpga.fpga_cclk, 1);
-		gpio_set_value(my_fpga.fpga_cclk, 0);
+		gpio_set_value(my_fpga.fpga_din, 1);
 		done = gpio_get_value(my_fpga.fpga_done);
-		counter++;
-		if ( counter > 8*2048 )
+		counter = 0;
+		while ( !done )
 		{
-			printk("prog fpga counter return\n");
+			gpio_set_value(my_fpga.fpga_cclk, 1);
+			gpio_set_value(my_fpga.fpga_cclk, 0);
+			done = gpio_get_value(my_fpga.fpga_done);
+			counter++;
+			if ( counter > 8*2048 )
+			{
+				printk("prog fpga counter return\n");
+				return -EIO;
+			}
+		}
+		for ( i = 0; i < 10; i++ )
+		{
+			gpio_set_value(my_fpga.fpga_cclk, 1);
+			gpio_set_value(my_fpga.fpga_cclk, 0);
+		}
+		gpio_free(my_fpga.fpga_prog);
+		gpio_free(my_fpga.fpga_cclk);
+		gpio_free(my_fpga.fpga_din);
+		gpio_free(my_fpga.fpga_done);
+		if (sk_fpga_reg_interrupt(my_fpga.fpga_irq_pin) != 0)
+		{
+			printk("Failed to register fpga interrupt\n");
 			return -EIO;
 		}
+		sk_fpga_setup_smc0();
+		my_fpga.fpga_status &= ~SK_FPGA_PROGRAMMING;
 	}
-	for ( i = 0; i < 10; i++ )
-	{
-		gpio_set_value(my_fpga.fpga_cclk, 1);
-		gpio_set_value(my_fpga.fpga_cclk, 0);
-	}
-	my_fpga.fpga_status |= SK_FPGA_PROGRAMMED;
-	gpio_free(my_fpga.fpga_prog);
-	gpio_free(my_fpga.fpga_cclk);
-	gpio_free(my_fpga.fpga_din);
-	gpio_free(my_fpga.fpga_done);
-	if (sk_fpga_reg_interrupt(my_fpga.fpga_irq_pin) != 0)
-	{
-		printk("Failed to register fpga interrupt\n");
-		return -EIO;
-	}
-    return 0;
+	return 0;
 }
+//
+
 
 void sk_fpga_prog(const unsigned char* buff, unsigned int bufLen)
 {
@@ -236,47 +201,113 @@ static ssize_t sk_fpga_write(struct file *filp,
 							 size_t len,
 							 loff_t *off)
 {
-	sk_fpga_prog(buff, len);
+	if (my_fpga.fpga_status & SK_FPGA_PROGRAMMING)
+		sk_fpga_prog(buff, len);
 	return len;
 }
-
+//
 static long sk_fpga_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_arg)
 {
-//    query_arg_t q;
-//
-//    switch (cmd)
-//    {
-//        case QUERY_GET_VARIABLES:
-//            q.status = status;
-//            q.dignity = dignity;
-//            q.ego = ego;
-//            if (copy_to_user((query_arg_t *)arg, &q, sizeof(query_arg_t)))
-//            {
-//                return -EACCES;
-//            }
-//            break;
-//        case QUERY_CLR_VARIABLES:
-//            status = 0;
-//            dignity = 0;
-//            ego = 0;
-//            break;
-//        case QUERY_SET_VARIABLES:
-//            if (copy_from_user(&q, (query_arg_t *)arg, sizeof(query_arg_t)))
-//            {
-//                return -EACCES;
-//            }
-//            status = q.status;
-//            dignity = q.dignity;
-//            ego = q.ego;
-//            break;
-//        default:
-//            return -EINVAL;
-//    }
+    switch (ioctl_num)
+    {
+    	case FPGA_MEM_READ:
+        case FPGA_MEM_WRITE:
+        {
+        	sk_fpga_iface_write new_data;
+           if (copy_from_user(&new_data, (sk_fpga_iface_write *)ioctl_arg, sizeof(sk_fpga_iface_write)))
+		   {
+			   return -EACCES;
+		   }
+           if (new_data.address_hi != my_fpga_iface_write.address_hi)
+           {
+        	   my_fpga_iface_write.address_hi = new_data.address_hi;
+        	   WRITE_REG(FPGA_REG_ADDRESS_HI, my_fpga_iface_write.address_hi);
+           }
 
+           if (new_data.address_lo != my_fpga_iface_write.address_lo)
+		  {
+        	   my_fpga_iface_write.address_lo = new_data.address_lo;
+        	   WRITE_REG(FPGA_REG_ADDRESS_LO, my_fpga_iface_write.address_lo);
+		  }
+
+           if (new_data.data_hi != my_fpga_iface_write.data_hi)
+		  {
+			   my_fpga_iface_write.data_hi = new_data.data_hi;
+			   WRITE_REG(FPGA_REG_DATA_HI, my_fpga_iface_write.data_hi);
+		  }
+
+           if (new_data.data_lo != my_fpga_iface_write.data_lo)
+		  {
+			   my_fpga_iface_write.data_lo = new_data.data_lo;
+			   WRITE_REG(FPGA_REG_DATA_LO, my_fpga_iface_write.data_lo);
+		  }
+
+           if (new_data.mode != my_fpga_iface_write.mode)
+		  {
+			   my_fpga_iface_write.mode = new_data.mode;
+			   WRITE_REG(FPGA_REG_MODE, my_fpga_iface_write.mode);
+		  }
+
+           my_fpga.fpga_data_ready = 0;
+           if (ioctl_num == FPGA_MEM_WRITE)
+        	   WRITE_REG(FPGA_REG_ACTION, ACTION_WRITE);
+           else
+        	   WRITE_REG(FPGA_REG_ACTION, ACTION_READ);
+
+    	   WRITE_REG(FPGA_REG_RUN, 1);
+
+           wait_event_interruptible(my_fpga.fpga_wait_queue, my_fpga.fpga_data_ready);
+           if (ioctl_num == FPGA_MEM_READ)
+           {
+        	   my_fpga_iface_read.data_read_hi = READ_REG(FPGA_REG_DATA_READ_HI);
+        	   my_fpga_iface_read.data_read_lo = READ_REG(FPGA_REG_DATA_READ_LO);
+			   if (copy_to_user((sk_fpga_iface_read *)ioctl_arg, &my_fpga_iface_read, sizeof(sk_fpga_iface_read)))
+			   {
+				   return -EACCES;
+			   }
+           }
+           return 0;
+        }
+
+        case FPGA_PROGRAMM:
+        {
+        	my_fpga.fpga_status |= SK_FPGA_PROGRAMMING;
+        	return 0;
+        }
+        case FPGA_RESET:
+        {
+     	   WRITE_REG(FPGA_REG_RESET, 1);
+     	   return 0;
+        }
+        case FPGA_IFACE_READ_REG:
+        {
+        	sk_fpga_single_reg new_data;
+        	if (copy_from_user(&new_data, (sk_fpga_single_reg *)ioctl_arg, sizeof(sk_fpga_single_reg)))
+		   {
+			   return -EACCES;
+		   }
+        	new_data.data = REG_READ(new_data.addr);
+        	if (copy_to_user((sk_fpga_single_reg *)ioctl_arg, &new_data, sizeof(sk_fpga_single_reg)))
+		   {
+			   return -EACCES;
+		   }
+        	return 0;
+        }
+        case FPGA_IFACE_WRITE_REG:
+        {
+        	sk_fpga_single_reg new_data;
+		   if (copy_from_user(&new_data, (sk_fpga_single_reg *)ioctl_arg, sizeof(sk_fpga_single_reg)))
+		   {
+			   return -EACCES;
+		   }
+		   WRITE_REG(new_data.addr, new_data.data);
+        	return 0;
+        }
+    }
     return 0;
 }
 
-int sk_fpga_set_clk_rate(struct platform_device *pdev)
+int sk_fpga_start_clk(struct platform_device *pdev)
 {
 	int ret = -EIO;
 	ret = clk_set_rate(my_fpga.fpga_clk, my_fpga.fpga_clk_rate * 1000000);
@@ -284,13 +315,7 @@ int sk_fpga_set_clk_rate(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Could not set fpga clk rate\n");
 		return ret;
 	}
-	my_fpga.fpga_status |= SK_FPGA_CLOCK_RATE_SET;
-	return 0;
-}
 
-int sk_fpga_start_clk(struct platform_device *pdev)
-{
-	int ret = -EIO;
 	ret = clk_prepare_enable(my_fpga.fpga_clk);
 	if (ret) {
 		dev_err(&pdev->dev, "Could not enable fpga clock\n");
@@ -366,6 +391,8 @@ int sk_fpga_fill_structure(struct platform_device *pdev)
 	my_fpga.fpga_irq_num = -1;
 	my_fpga.fpga_mem_virt_start_cs0 = NULL;
 	my_fpga.fpga_mem_virt_start_cs1 = NULL;
+	my_fpga.fpga_data_ready = 0;
+	init_waitqueue_head(&my_fpga.fpga_wait_queue);
 
 	my_fpga.fpga_clk = devm_clk_get(&pdev->dev, "mclk");
 	if (IS_ERR(my_fpga.fpga_clk)) {
@@ -375,20 +402,7 @@ int sk_fpga_fill_structure(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct file_operations fpga_fops = {
-        .owner                = THIS_MODULE,
-        //.read                 = sk_fpga_read,
-        .write                = sk_fpga_write,
-        .open                 = sk_fpga_open,
-        .release              = sk_fpga_release,
-		.unlocked_ioctl 	  = sk_fpga_ioctl,
-};
 
-static struct miscdevice fpga_dev = {
-        MISC_DYNAMIC_MINOR,
-        "fpga",
-        &fpga_fops
-};
 
 static int sk_fpga_probe (struct platform_device *pdev)
 {
@@ -397,7 +411,7 @@ static int sk_fpga_probe (struct platform_device *pdev)
 
 	printk("Loading FPGA driver for SK-AT91SAM9M10G45EK-XC6SLX\n");
 
-	ret = misc_register(&fpga_dev);
+	ret = misc_register(&sk_fpga_dev);
 	if (ret)
 	{
 		printk(KERN_ERR"Unable to register \"fpga\" misc device\n");
@@ -426,22 +440,16 @@ static int sk_fpga_probe (struct platform_device *pdev)
 		printk("Failed to remap mem for fpga cs1\n");
 		return -ENOMEM;
 	}
+	sk_fpga_start_clk(pdev);
 
-//	sk_fpga_set_clk_rate(pdev);
+	my_fpga_iface_write.address_hi = 0;
+	my_fpga_iface_write.address_lo = 0;
+	my_fpga_iface_write.data_hi = 0;
+	my_fpga_iface_write.data_lo = 0;
+	my_fpga_iface_write.mode = 0;
 
-//	sk_fpga_start_clk(pdev);
-
-	//sk_fpga_setup_smc0();
-
-	my_fpga_action_set.action = 0;
-	my_fpga_action_set.address_hi = 0;
-	my_fpga_action_set.address_lo = 0;
-	my_fpga_action_set.data_hi = 0;
-	my_fpga_action_set.data_lo = 0;
-	my_fpga_action_set.mode = 0;
-
-	my_fpga_action_get.data_read_hi = 0;
-	my_fpga_action_get.data_read_lo = 0;
+	my_fpga_iface_read.data_read_hi = 0;
+	my_fpga_iface_read.data_read_lo = 0;
 
 	return ret;
 }
@@ -457,14 +465,14 @@ static int sk_fpga_remove(struct platform_device *pdev)
 	{
 		iounmap(my_fpga.fpga_mem_virt_start_cs1);
 	}
-	if (my_fpga.fpga_irq_num > 0)
+	if (my_fpga.fpga_status & SK_FPGA_IRQ_REGISTERED)
 	{
 		printk("REMOVE UNREG IRQ\n");
 		sk_fpga_unreg_interrupt();
 	}
 	release_mem_region(my_fpga.fpga_mem_phys_start_cs0, my_fpga.fpga_mem_size);
 	release_mem_region(my_fpga.fpga_mem_phys_start_cs1, my_fpga.fpga_mem_size);
-	misc_deregister(&fpga_dev);
+	misc_deregister(&sk_fpga_dev);
 	return 0;
 }
 
