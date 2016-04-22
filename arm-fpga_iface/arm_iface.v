@@ -99,6 +99,7 @@ module top(
 	input wire write_i,					// input write strobe
 	input wire cs_i,					// input chip select strobe
 	input wire clk_i,					// input clk signal
+	input wire reset_i,					// external reset signal, if low - reset
 	output wire irq_o					// output interrupt pin
 	);
 	
@@ -201,218 +202,264 @@ module top(
 	wire stop_mem_write = mem_action_write && counter == 2;
 
 	// store chipselect stuff into latches
-	always @ (negedge clk_i)
+	always @ (negedge clk_i or negedge reset_i)
 	begin
-		stage_2 <= stage_1;
+		if (!reset_i)
+		begin
+			status_reg <= `STATUS_IDLE;
+			irq_reg <= `IRQ_CLEAR;						
+			regulatory_lo_reg <= 0;
+			regulatory_hi_reg <= 0;
+			address_hi_reg <= 0;
+			address_lo_reg <= 0;
+			data_hi_reg <= 0;
+			data_lo_reg <= 0;
+			result_hi_reg <= 0;
+			result_lo_reg <= 0;
+			busy_flag_reg <= 0;
+			sys_read_en <= 0;
+			sys_write_en <= 0;
+			counter <= 0;
+			stage_1 <= 0;
+			stage_2 <= 0;
+			stage_3 <= 0;
+		end
+		else
+		begin
+			stage_2 <= stage_1;
+		end
 	end
 
-	always @ (posedge clk_i) 
-	begin	
-		// store chipselect stuff into latches
-		stage_3 <= stage_2;
-		stage_1 <= cs_i;
-
-		if (iface_accessed)
+	always @ (posedge clk_i or negedge reset_i) 
+	begin
+		// external is triggered, clear inner state
+		if (!reset_i)
 		begin
-			// read from fpga routine
-			if (!read_i)
-			begin
-				case ( addr_i[24:1] )
-					// reads magic constant, just sanity check
-					`ADDR_SANITY_REG:
-					begin
-						data_read <= `DATA_MAGIC;
-					end
-					// reads iface status register and clears interrupt flag
-					`ADDR_STATUS_REG:
-					begin
-						data_read <= status_reg;
-						irq_reg <= `IRQ_CLEAR;
-					end
-					// reads low part of regulatory register of iface
-					`ADDR_REGULATORY_LO_REG:
-					begin
-						data_read <= regulatory_lo_reg;
-					end
-					// reads high part of regulatory register of iface
-					`ADDR_REGULATORY_HI_REG:
-					begin
-						data_read <= regulatory_hi_reg;
-					end
-					// reads high part of address for iface to work with some mem
-					`ADDR_ADDRESS_HI_REG:
-					begin
-						data_read <= address_hi_reg;
-					end
-					// reads low part of address for iface to work with some mem
-					`ADDR_ADDRESS_LO_REG:
-					begin
-						data_read <= address_lo_reg;
-					end
-					// reads high part of data to be written to some mem with iface
-					`ADDR_DATA_HI_REG:
-					begin
-						data_read <= data_hi_reg;
-					end
-					// reads low part of data to be written to some mem with iface
-					`ADDR_DATA_LO_REG:
-					begin
-						data_read <= data_lo_reg;
-					end
-					// reads high part of result of reading some mem with iface
-					`ADDR_RESULT_HI_REG:
-					begin
-							data_read <= result_hi_reg;
-					end
-					// reads low part of result of reading some mem with iface
-					`ADDR_RESULT_LO_REG:
-					begin
-						data_read <= result_lo_reg;
-					end
-					// if read to wrong address happens, set status and raise interrupt
-					default:
-					begin
-						data_read <= `DATA_ERROR;
-						status_reg <= `STATUS_ERROR_WRONG_ADDR_RD;
-						irq_reg <= `IRQ_RAISE;
-					end
-				endcase
-			end
-			// write to fpga routine
-			if (!write_i)
-			begin
-				case ( addr_i[24:1] )
-					// writing to this address starts iface interaction with memory
-					`ADDR_RUN_MEM_INTERACT_REG:
-					begin
-						// if action(read/write) is not set to none and mode(type of mem: im, dm, regfile) is not set to none and we're not busy
-						if (run_mem_interact)
-						begin
-							// set busy status
-							status_reg <= `STATUS_BUSY;
-							busy_flag_reg <= `BUSY_SET;
-							counter <= 0;
-							// set read enable for mem interacting with
-							if (mem_action_read)
-							begin
-								sys_read_en <= 1;
-							end
-							// set write enable for mem interacting with
-							else if (mem_action_write)
-							begin
-								sys_write_en <= 1;
-							end
-							else
-							// report error: wrong mem action set
-							begin
-								status_reg <= `STATUS_ERROR_WRONG_MEM_ACTION_SET;
-								irq_reg <= `IRQ_RAISE;
-							end
-						end
-						// something is set wrong or we're busy: report error
-						else
-						begin
-							irq_reg <= `IRQ_RAISE;
-							if (busy_flag_reg)
-							begin
-								status_reg <= `STATUS_ERROR_HIT_WHILE_BUSY;
-							end
-							else if (!mem_action_not_none)
-							begin
-								status_reg <= `STATUS_ERROR_WRONG_MEM_ACTION_SET;
-							end
-							else if (!mem_type_not_none)
-							begin
-								status_reg <= `STATUS_ERROR_WRONG_MEM_TYPE_SET;
-							end
-							else
-							begin
-							end
-						end
-					end
-					// writes high part of address for iface to work with some mem
-					`ADDR_ADDRESS_HI_REG:
-					begin
-						address_hi_reg <= data_write;
-					end
-					// writes low part of address for iface to work with some mem
-					`ADDR_ADDRESS_LO_REG:
-					begin
-						address_lo_reg <= data_write;
-					end
-					// writes high part of data to be written with iface into some mem
-					`ADDR_DATA_HI_REG:
-					begin
-						data_hi_reg <= data_write;
-					end
-					// writes low part of data to be written with iface into some mem
-					`ADDR_DATA_LO_REG:
-					begin
-						data_lo_reg <= data_write;
-					end
-					// writes low part of regulatory register of iface
-					`ADDR_REGULATORY_LO_REG:
-					begin
-						regulatory_lo_reg <= data_write;
-					end
-					// writes high part of regulatory register of iface
-					`ADDR_REGULATORY_HI_REG:
-					begin
-						regulatory_hi_reg <= data_write;
-					end
-					// reset iface inner state and regs
-					`ADDR_IFACE_RESET_REG:
-					begin
-						status_reg <= `STATUS_IDLE;
-						irq_reg <= `IRQ_CLEAR;						
-						regulatory_lo_reg <= 0;
-						regulatory_hi_reg <= 0;
-						address_hi_reg <= 0;
-						address_lo_reg <= 0;
-						data_hi_reg <= 0;
-						data_lo_reg <= 0;
-						result_hi_reg <= 0;
-						result_lo_reg <= 0;
-						busy_flag_reg <= 0;
-						sys_read_en <= 0;
-						sys_write_en <= 0;
-						counter <= 0;
-					end
-					// if write to wrong address happens, set status and raise interrupt
-					default:
-					begin
-						status_reg <= `STATUS_ERROR_WRONG_ADDR_WR;
-						irq_reg <= `IRQ_RAISE;
-					end
-				endcase
-			end
+			status_reg <= `STATUS_IDLE;
+			irq_reg <= `IRQ_CLEAR;						
+			regulatory_lo_reg <= 0;
+			regulatory_hi_reg <= 0;
+			address_hi_reg <= 0;
+			address_lo_reg <= 0;
+			data_hi_reg <= 0;
+			data_lo_reg <= 0;
+			result_hi_reg <= 0;
+			result_lo_reg <= 0;
+			busy_flag_reg <= 0;
+			sys_read_en <= 0;
+			sys_write_en <= 0;
+			counter <= 0;
+			stage_1 <= 0;
+			stage_2 <= 0;
+			stage_3 <= 0;
 		end
-		// fpga action routine
-		// while busy flag is set run actio routine
-		// TODO: check if counter should be 1?
-		if (busy_flag_reg == 1)
+		else
 		begin
-			counter <= counter + 1;
-			// clear read enable strobe on second tick and read result data
-			if (stop_mem_read)
+			// store chipselect stuff into latches
+			stage_3 <= stage_2;
+			stage_1 <= cs_i;
+			if (iface_accessed)
 			begin
-				{result_hi_reg, result_lo_reg} <= result_data;
-				sys_read_en <= 0;
-			end			
-			// clear write enable strobe on second tick
-			else if (stop_mem_write)
-			begin
-				sys_write_en <= 0;
+				// read from fpga routine
+				if (!read_i)
+				begin
+					case ( addr_i[24:1] )
+						// reads magic constant, just sanity check
+						`ADDR_SANITY_REG:
+						begin
+							data_read <= `DATA_MAGIC;
+						end
+						// reads iface status register and clears interrupt flag
+						`ADDR_STATUS_REG:
+						begin
+							data_read <= status_reg;
+							irq_reg <= `IRQ_CLEAR;
+						end
+						// reads low part of regulatory register of iface
+						`ADDR_REGULATORY_LO_REG:
+						begin
+							data_read <= regulatory_lo_reg;
+						end
+						// reads high part of regulatory register of iface
+						`ADDR_REGULATORY_HI_REG:
+						begin
+							data_read <= regulatory_hi_reg;
+						end
+						// reads high part of address for iface to work with some mem
+						`ADDR_ADDRESS_HI_REG:
+						begin
+							data_read <= address_hi_reg;
+						end
+						// reads low part of address for iface to work with some mem
+						`ADDR_ADDRESS_LO_REG:
+						begin
+							data_read <= address_lo_reg;
+						end
+						// reads high part of data to be written to some mem with iface
+						`ADDR_DATA_HI_REG:
+						begin
+							data_read <= data_hi_reg;
+						end
+						// reads low part of data to be written to some mem with iface
+						`ADDR_DATA_LO_REG:
+						begin
+							data_read <= data_lo_reg;
+						end
+						// reads high part of result of reading some mem with iface
+						`ADDR_RESULT_HI_REG:
+						begin
+								data_read <= result_hi_reg;
+						end
+						// reads low part of result of reading some mem with iface
+						`ADDR_RESULT_LO_REG:
+						begin
+							data_read <= result_lo_reg;
+						end
+						// if read to wrong address happens, set status and raise interrupt
+						default:
+						begin
+							data_read <= `DATA_ERROR;
+							status_reg <= `STATUS_ERROR_WRONG_ADDR_RD;
+							irq_reg <= `IRQ_RAISE;
+						end
+					endcase
+				end
+				// write to fpga routine
+				if (!write_i)
+				begin
+					case ( addr_i[24:1] )
+						// writing to this address starts iface interaction with memory
+						`ADDR_RUN_MEM_INTERACT_REG:
+						begin
+							// if action(read/write) is not set to none and mode(type of mem: im, dm, regfile) is not set to none and we're not busy
+							if (run_mem_interact)
+							begin
+								// set busy status
+								status_reg <= `STATUS_BUSY;
+								busy_flag_reg <= `BUSY_SET;
+								counter <= 0;
+								// set read enable for mem interacting with
+								if (mem_action_read)
+								begin
+									sys_read_en <= 1;
+								end
+								// set write enable for mem interacting with
+								else if (mem_action_write)
+								begin
+									sys_write_en <= 1;
+								end
+								else
+								// report error: wrong mem action set
+								begin
+									status_reg <= `STATUS_ERROR_WRONG_MEM_ACTION_SET;
+									irq_reg <= `IRQ_RAISE;
+								end
+							end
+							// something is set wrong or we're busy: report error
+							else
+							begin
+								irq_reg <= `IRQ_RAISE;
+								if (busy_flag_reg)
+								begin
+									status_reg <= `STATUS_ERROR_HIT_WHILE_BUSY;
+								end
+								else if (!mem_action_not_none)
+								begin
+									status_reg <= `STATUS_ERROR_WRONG_MEM_ACTION_SET;
+								end
+								else if (!mem_type_not_none)
+								begin
+									status_reg <= `STATUS_ERROR_WRONG_MEM_TYPE_SET;
+								end
+								else
+								begin
+								end
+							end
+						end
+						// writes high part of address for iface to work with some mem
+						`ADDR_ADDRESS_HI_REG:
+						begin
+							address_hi_reg <= data_write;
+						end
+						// writes low part of address for iface to work with some mem
+						`ADDR_ADDRESS_LO_REG:
+						begin
+							address_lo_reg <= data_write;
+						end
+						// writes high part of data to be written with iface into some mem
+						`ADDR_DATA_HI_REG:
+						begin
+							data_hi_reg <= data_write;
+						end
+						// writes low part of data to be written with iface into some mem
+						`ADDR_DATA_LO_REG:
+						begin
+							data_lo_reg <= data_write;
+						end
+						// writes low part of regulatory register of iface
+						`ADDR_REGULATORY_LO_REG:
+						begin
+							regulatory_lo_reg <= data_write;
+						end
+						// writes high part of regulatory register of iface
+						`ADDR_REGULATORY_HI_REG:
+						begin
+							regulatory_hi_reg <= data_write;
+						end
+						// reset iface inner state and regs
+						`ADDR_IFACE_RESET_REG:
+						begin
+							status_reg <= `STATUS_IDLE;
+							irq_reg <= `IRQ_CLEAR;						
+							regulatory_lo_reg <= 0;
+							regulatory_hi_reg <= 0;
+							address_hi_reg <= 0;
+							address_lo_reg <= 0;
+							data_hi_reg <= 0;
+							data_lo_reg <= 0;
+							result_hi_reg <= 0;
+							result_lo_reg <= 0;
+							busy_flag_reg <= 0;
+							sys_read_en <= 0;
+							sys_write_en <= 0;
+							counter <= 0;
+						end
+						// if write to wrong address happens, set status and raise interrupt
+						default:
+						begin
+							status_reg <= `STATUS_ERROR_WRONG_ADDR_WR;
+							irq_reg <= `IRQ_RAISE;
+						end
+					endcase
+				end
 			end
-			else
+			// fpga action routine
+			// while busy flag is set run actio routine
+			// TODO: check if counter should be 1?
+			if (busy_flag_reg == 1)
 			begin
-			end
-			// set finish status
-			if (counter == 2)
-			begin
-				status_reg <= `STATUS_DONE;
-				busy_flag_reg <= `BUSY_CLEAR;
-				irq_reg <= `IRQ_RAISE;
+				counter <= counter + 1;
+				// clear read enable strobe on second tick and read result data
+				if (stop_mem_read)
+				begin
+					{result_hi_reg, result_lo_reg} <= result_data;
+					sys_read_en <= 0;
+				end			
+				// clear write enable strobe on second tick
+				else if (stop_mem_write)
+				begin
+					sys_write_en <= 0;
+				end
+				else
+				begin
+				end
+				// set finish status
+				if (counter == 2)
+				begin
+					status_reg <= `STATUS_DONE;
+					busy_flag_reg <= `BUSY_CLEAR;
+					irq_reg <= `IRQ_RAISE;
+				end
 			end
 		end
 	end
