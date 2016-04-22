@@ -113,8 +113,8 @@ module top(
 	assign disable_io = (read_i);
 	
 	// to deal with external io data bus
-	wire [`SIZE_BYTE] data_write;
-	reg [`SIZE_BYTE] data_read = 0;	
+	wire [`SIZE_HALF] data_write;
+	reg [`SIZE_HALF] data_read = 0;	
 	
 	// state registers
 	reg [`SIZE_HALF] status_reg = `STATUS_IDLE; // stores current iface status
@@ -127,7 +127,7 @@ module top(
 	reg [`SIZE_HALF] result_lo_reg = 0; // stores low part of result data from iface 
 	reg [`SIZE_HALF] result_hi_reg = 0; // stores high part of result data from iface 
 	wire [`SIZE_WORD] data_full_reg = {data_hi_reg, data_lo_reg}; // full version of data for iface to work with some mem
-	wire [`SIZE_WORD] addr_full_reg = {addr_hi_reg, data_lo_reg}; // full version of address for iface to work with some mem
+	wire [`SIZE_WORD] addr_full_reg = {address_hi_reg, address_lo_reg}; // full version of address for iface to work with some mem
 	wire [`SIZE_WORD] result_full_reg = {result_hi_reg, result_lo_reg}; // full version of result of iface interacting with some mem
 	wire [`SIZE_WORD] regulatory_full_reg = {regulatory_hi_reg, regulatory_lo_reg}; // full version of regulatory register of iface
 	reg busy_flag_reg = 0; // shows if iface is busy at the moment
@@ -165,7 +165,7 @@ module top(
 														result_data_mem_data : 0;
 
 	// instance and connect 2 mems
-	data_memory #() MAIN_MEM(
+	data_memory MAIN_MEM(
 		.address_i(addr_full_reg),
 		.data_i(data_full_reg),
 		.write_data_i(write_strobe_mem_main),
@@ -174,7 +174,7 @@ module top(
 		.read_data_o(result_data_mem_main)
 	);
 	
-	data_memory #() DATA_MEM(
+	data_memory DATA_MEM(
 		.address_i(addr_full_reg),
 		.data_i(data_full_reg),
 		.write_data_i(write_strobe_mem_data),
@@ -184,7 +184,7 @@ module top(
 	);
 
 	// becomes true if chip select was switched from low to high
-	wire iface_accessed = = {stage_2, stage_3} == `CHIP_SELECT_LOW_TO_HIGH;
+	wire iface_accessed = {stage_2, stage_3} == `CHIP_SELECT_LOW_TO_HIGH;
 	// becomes true if memory action is not none
 	wire mem_action_not_none = regulatory_full_reg[`REGULATORY_MEM_ACTION] != `MEM_ACTION_NONE;
 	// becomes true if memory type is not none
@@ -200,35 +200,6 @@ module top(
 	wire stop_mem_read = mem_action_read && counter == 2;
 	// becomes true if mem write action is set and counter is reached limit
 	wire stop_mem_write = mem_action_write && counter == 2;
-
-	// store chipselect stuff into latches
-	always @ (negedge clk_i or negedge reset_i)
-	begin
-		if (!reset_i)
-		begin
-			status_reg <= `STATUS_IDLE;
-			irq_reg <= `IRQ_CLEAR;						
-			regulatory_lo_reg <= 0;
-			regulatory_hi_reg <= 0;
-			address_hi_reg <= 0;
-			address_lo_reg <= 0;
-			data_hi_reg <= 0;
-			data_lo_reg <= 0;
-			result_hi_reg <= 0;
-			result_lo_reg <= 0;
-			busy_flag_reg <= 0;
-			sys_read_en <= 0;
-			sys_write_en <= 0;
-			counter <= 0;
-			stage_1 <= 0;
-			stage_2 <= 0;
-			stage_3 <= 0;
-		end
-		else
-		begin
-			stage_2 <= stage_1;
-		end
-	end
 
 	always @ (posedge clk_i or negedge reset_i) 
 	begin
@@ -255,8 +226,9 @@ module top(
 		end
 		else
 		begin
-			// store chipselect stuff into latches
+			// store chipselect stuff into flip-flops
 			stage_3 <= stage_2;
+			stage_2 <= stage_1;
 			stage_1 <= cs_i;
 			if (iface_accessed)
 			begin
