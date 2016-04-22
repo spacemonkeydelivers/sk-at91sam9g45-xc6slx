@@ -182,14 +182,37 @@ module top(
 		.read_data_o(result_data_mem_data)
 	);
 
-	always @ (posedge clk_i)
+	// becomes true if chip select was switched from low to high
+	wire iface_accessed = = {stage_2, stage_3} == `CHIP_SELECT_LOW_TO_HIGH;
+	// becomes true if memory action is not none
+	wire mem_action_not_none = regulatory_full_reg[`REGULATORY_MEM_ACTION] != `MEM_ACTION_NONE;
+	// becomes true if memory type is not none
+	wire mem_type_not_none = regulatory_full_reg[`REGULATORY_MEM_TYPE] != `MEM_TYPE_NONE;
+	// becomes true if memory action and type are set and we're not busy
+	wire run_mem_interact = mem_action_not_none && mem_type_not_none && !busy_flag_reg;
+	// becomes true if memory action type is read
+	wire mem_action_read = regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_READ;
+	// becomes true if memory action type is write
+	wire mem_action_write = regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_WRITE;
+	// TODO: fix counter value
+	// becomes true if mem read action is set and counter is reached limit
+	wire stop_mem_read = mem_action_read && counter == 2;
+	// becomes true if mem write action is set and counter is reached limit
+	wire stop_mem_write = mem_action_write && counter == 2;
+
+	// store chipselect stuff into latches
+	always @ (negedge clk_i)
+	begin
+		stage_2 <= stage_1;
+	end
+
+	always @ (posedge clk_i) 
 	begin	
 		// store chipselect stuff into latches
 		stage_3 <= stage_2;
-		stage_2 <= stage_1;
 		stage_1 <= cs_i;
 
-		if ({stage_2, stage_3} == `CHIP_SELECT_LOW_TO_HIGH)
+		if (iface_accessed)
 		begin
 			// read from fpga routine
 			if (!read_i)
@@ -263,19 +286,19 @@ module top(
 					`ADDR_RUN_MEM_INTERACT_REG:
 					begin
 						// if action(read/write) is not set to none and mode(type of mem: im, dm, regfile) is not set to none and we're not busy
-						if (regulatory_full_reg[`REGULATORY_MEM_ACTION] != `MEM_ACTION_NONE && regulatory_full_reg[`REGULATORY_MEM_TYPE] != `MEM_TYPE_NONE && !busy_flag_reg)
+						if (run_mem_interact)
 						begin
 							// set busy status
 							status_reg <= `STATUS_BUSY;
 							busy_flag_reg <= `BUSY_SET;
 							counter <= 0;
 							// set read enable for mem interacting with
-							if (regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_READ)
+							if (mem_action_read)
 							begin
 								sys_read_en <= 1;
 							end
 							// set write enable for mem interacting with
-							else if (regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_WRITE)
+							else if (mem_action_write)
 							begin
 								sys_write_en <= 1;
 							end
@@ -294,11 +317,11 @@ module top(
 							begin
 								status_reg <= `STATUS_ERROR_HIT_WHILE_BUSY;
 							end
-							else if (regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_NONE)
+							else if (!mem_action_not_none)
 							begin
 								status_reg <= `STATUS_ERROR_WRONG_MEM_ACTION_SET;
 							end
-							else if (regulatory_full_reg[`REGULATORY_MEM_TYPE] == `MEM_TYPE_NONE)
+							else if (!mem_type_not_none)
 							begin
 								status_reg <= `STATUS_ERROR_WRONG_MEM_TYPE_SET;
 							end
@@ -371,13 +394,13 @@ module top(
 		begin
 			counter <= counter + 1;
 			// clear read enable strobe on second tick and read result data
-			if (regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_READ && counter == 2)
+			if (stop_mem_read)
 			begin
 				{result_hi_reg, result_lo_reg} <= result_data;
 				sys_read_en <= 0;
 			end			
 			// clear write enable strobe on second tick
-			else if (regulatory_full_reg[`REGULATORY_MEM_ACTION] == `MEM_ACTION_WRITE && counter == 2)
+			else if (stop_mem_write)
 			begin
 				sys_write_en <= 0;
 			end
